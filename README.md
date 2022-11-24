@@ -18,3 +18,19 @@ to trick the player into thinking it's 10×20.
 In 2002 Guideline, it could be at least 22 height.
 If hardware permits it, a few pixels of row 21 will be visible.
 ## Installation
+click ~
+https://my-tetris-js.netlify.app/
+
+or
+1.open live server index.html
+2.play game
+## Usage
+
+click ~
+https://my-tetris-js.netlify.app/
+
+or
+1.open live server index.html
+2.play game
+### The Core Team
+ismoilov_e
