@@ -1,0 +1,534 @@
+<!Doctype html>
+<html>
+
+<head>
+  <link rel="stylesheet" href="style.css">
+  <title>Javascript Tetris</title>
+</head>
+
+<body>
+
+  <div id="tetris">
+    <div id="menu">
+      <p id="start"><a href="javascript:play();">Press Space to Play.</a></p>
+      <p><canvas id="germinative"></canvas></p>
+      <p>Score <span id="score">00000</span></p>
+      <p>Rows <span id="rows">0</span></p>
+    </div>
+    <canvas id="canvas">
+      Sorry, this example cannot be run because your browser does not support the &lt;canvas&gt; element
+    </canvas>
+  </div>
+
+  <script src="my_tetris.js"></script>
+  <script>
+
+    //// base helper methods
+
+    function obtain(el) {
+      return document.getElementById(el);
+    }
+    function mask(el) {
+      obtain(el).style.visibility = 'hidden';
+    }
+    function presentation(el) {
+      obtain(el).style.visibility = null;
+    }
+    function in_html(el, in_html) {
+      obtain(el).innerHTML = in_html;
+    }
+
+    function timestamp() {
+      return new Date().getTime();
+    }
+    function random(min, max) {
+      return (min + (Math.random() * (max - min)));
+    }
+    function randomChoice(choices) {
+      return choices[Math.round(random(0, choices.length - 1))];
+    }
+
+    if (!window.requestAnimationFrame) {
+      window.requestAnimationFrame = window.webkitRequestAnimationFrame ||
+        window.oRequestAnimationFrame ||
+        window.msRequestAnimationFrame ||
+        window.mozRequestAnimationFrame ||
+        function (callback, element) {
+          window.setTimeout(callback, 1200 / 90);
+        }
+    }
+
+    var DIR = {
+      UP: 0,RIGHT: 1,
+      DOWN: 2,LEFT: 3,
+      MIN: 0,MAX: 3
+    },
+      KEY = {
+        ESC: 27,SPACE: 32,
+        LEFT: 37,UP: 38,
+        RIGHT: 39,DOWN: 40
+      },
+      newstats = new Stats(),
+      canvas = obtain('canvas'),
+      ucanv = obtain('germinative'),
+      uctx = ucanv.getContext('2d'),
+      cntx = canvas.getContext('2d'),
+      speed = {
+        start: 0.6,
+        decrement: 0.005,
+        min: 0.1
+      },
+      nx = 10, //// width of tetris court (in bowl)
+      ny = 20, //// height of tetris court (in bowl)
+      nu = 5;  //// width/height of germinative preview (in bowl)
+
+
+    //// game variables
+    var x_p,
+      y_p,
+      //// pixel size of a single tetris block
+      management,
+      //// queue of user management (inputs)
+      bowl,
+      //// 2 dimensional array (nx*ny) representing tetris court - either empty block or occupied by a 'piece'
+      st_time,
+      //// time since starting this game
+      act,
+      //// true|false - game is in progress
+      following,
+      //// the following piece
+      barnyard,
+      //// the  barnyard piece
+      core,
+      //// the currently displayed scr (it catches up to scr in small chunks - like a spinning slot machine)
+      scr,
+      //// the  barnyard scr
+      tor,
+      //// how long before  barnyard piece drops by 1 row
+      line_row;
+      //// number of completed line_row in the  barnyard game
+    //////
+    var i = {
+      size: 4,
+      bowl: [0x0F00, 0x2222, 0x00F0, 0x4444],
+      color: 'cyan'
+    };
+    var j = {
+      size: 3,
+      bowl: [0x44C0, 0x8E00, 0x6440, 0x0E20],
+      color: 'blue'
+    };
+    var l = {
+      size: 3,
+      bowl: [0x4460, 0x0E80, 0xC440, 0x2E00],
+      color: 'orange'
+    };
+    var o = {
+      size: 2,
+      bowl: [0xCC00, 0xCC00, 0xCC00, 0xCC00],
+      color: 'yellow'
+    };
+    var s = {
+      size: 3,
+      bowl: [0x06C0, 0x8C40, 0x6C00, 0x4620],
+      color: 'green'
+    };
+    var t = {
+      size: 3,
+      bowl: [0x0E40, 0x4C40, 0x4E00, 0x4640],
+      color: 'purple'
+    };
+    var z = {
+      size: 3,
+      bowl: [0x0C60, 0x4C80, 0xC600, 0x2640],
+      color: 'red'
+    };
+
+    //// do the bit manipulation and iterate through each
+    //// occupied block (x,y) for a given piece
+
+    function anyblocks(tp, x_pos, y_pos, dir, fn) {
+      var bit, result, row = 0, col = 0, bowl = tp.bowl[dir];
+      for (bit = 0x8000; bit > 0; bit = bit >> 1) {
+        if (bowl & bit) fn(x_pos + col, y_pos + row);
+
+        if (++col === 4) {
+          col = 0;
+          ++row;
+        }
+      }
+    }
+
+    //// check if a piece can fit into a position in the grid
+    function occupied(tp, x, y, dir) {
+      var result = false
+      anyblocks(tp, x, y, dir, function (x, y) {
+        if ((x < 0) || (x >= nx) || (y < 0) || (y >= ny) || getBlock(x, y))
+          result = true;
+      });
+      return result;
+    }
+
+    function free_fun(tp, x, y, dir) {
+      return !occupied(tp, x, y, dir);
+    }
+
+    //// start with 4 instances of each piece and
+    //// pick randomly until the 'bag is empty'
+
+    var  chunk = [];
+    function random_chunk() {
+      if (chunk.length == 0)
+        chunk = [
+          i, i, i, i, 
+          j, j, j, j, 
+          l, l, l, l, 
+          o, o, o, o, 
+          s, s, s, s, 
+          t, t, t, t, 
+          z, z, z, z
+        ];
+      var tp =  chunk.splice(random(0,  chunk.length - 1), 1)[0];
+      return { 
+        tp: tp, 
+        dir: DIR.UP, 
+        x: Math.round(random(0, nx - tp.size)), 
+        y: 0 
+      };
+    }
+
+
+    //// GAME LOOP //// ИГРОВОЙ ЦИКЛ
+
+    function run_game() {
+
+      showStats(); //// initialize FPS counter
+      addEvents(); //// attach keydown and resize events
+
+      var finaly = instantly = timestamp();
+
+      function frame() {
+        instantly = timestamp();
+        update(Math.min(1, (instantly - finaly) / 1000.0)); //// using requestAnimationFrame have to be able to handle large delta's caused when it 'hibernates' in a background or non-visible tab
+        draw();
+        newstats.update();
+        finaly = instantly;
+        requestAnimationFrame(frame, canvas);
+      }
+
+      resize(); 
+      //// setup all our sizing information
+      reset();  
+      //// reset the per-game variables
+      frame();  
+      //// start the first frame
+
+    }
+
+    function showStats() {
+      newstats.domElement.id = 'newstats';
+      obtain('menu').appendChild(newstats.domElement);
+    }
+
+    function addEvents() {
+      document.addEventListener('keydown', keydown, false);
+      window.addEventListener('resize', resize, false);
+    }
+
+    function resize(event) {
+      canvas.width = canvas.clientWidth;  //// set canvas logical size equal to its physical size
+      canvas.height = canvas.clientHeight; //// (ditto)
+      ucanv.width = ucanv.clientWidth;
+      ucanv.height = ucanv.clientHeight;
+      x_p = canvas.width / nx; //// pixel size of a single tetris block
+      y_p = canvas.height / ny; //// (ditto)
+      invalidate();
+      invalidateNext();
+    }
+
+    function keydown(ev) {
+      var handled = false;
+      if (act) {
+        switch (ev.keyCode) {
+          case KEY.LEFT: 
+            management.push(DIR.LEFT); 
+            handled = true; 
+          break;
+          case KEY.RIGHT: 
+            management.push(DIR.RIGHT); 
+            handled = true; 
+            break;
+          case KEY.UP: 
+            management.push(DIR.UP); 
+            handled = true; 
+          break;
+          case KEY.DOWN: 
+            management.push(DIR.DOWN); 
+            handled = true; 
+          break;
+          case KEY.ESC: 
+            lose(); 
+            handled = true; 
+          break;
+        }
+      }
+      else if (ev.keyCode == KEY.SPACE) {
+        play();
+        handled = true;
+      }
+      if (handled)
+        ev.preventDefault(); //// prevent arrow keys from scrolling the page (supported in IE9+ and all other browsers)
+    }
+
+    //// GAME LOGIC
+
+    function play() { 
+      mask('start'); 
+      reset(); 
+      act = true; 
+    }
+    function lose() { 
+      presentation('start'); 
+      setVisualScore(); 
+      act = false; 
+    }
+    function setVisualScore(n) { 
+      core = n || scr; 
+      invalidateScore(); 
+    }
+    function setScore(n) { 
+      scr = n; 
+      setVisualScore(n); 
+    }
+    function addScore(n) { 
+      scr = scr + n; 
+    }
+    function clearScore() { 
+      setScore(0); 
+    }
+    function clearRows() { 
+      setRows(0); 
+    }
+    function setRows(n) { 
+      line_row = n; 
+      tor = Math.max(speed.min, speed.start - (speed.decrement * line_row)); 
+      invalidateRows(); 
+    }
+    function addRows(n) { 
+      setRows(line_row + n); 
+    }
+    function getBlock(x, y) { 
+      return (bowl && bowl[x] ? bowl[x][y] : null); 
+    }
+    function setBlock(x, y, tp) { 
+      bowl[x] = bowl[x] || []; 
+      bowl[x][y] = tp; 
+      invalidate(); 
+    }
+    function clearmanagement() { 
+      management = []; 
+    }
+    function clearBlocks() { 
+      bowl = []; 
+      invalidate(); 
+    }
+    function setNextPiece(piece) { 
+      following = piece || random_chunk(); 
+      invalidateNext(); 
+    }
+    function setCurrentPiece(piece) { 
+      barnyard = piece || random_chunk(); 
+      invalidate(); 
+    }
+
+    function reset() {
+      st_time = 0;
+      clearmanagement();clearBlocks();
+      clearRows();clearScore();
+      setCurrentPiece(following);setNextPiece();
+    }
+
+    function update(idt) {
+      if (act) {
+        
+        if (core < scr)
+        
+          setVisualScore(core + 1);
+          handle(management.shift());
+        st_time = st_time + idt;
+        if (st_time > tor) {
+          st_time = st_time - tor;
+          drop();
+        }
+      }
+    }
+
+    function handle(action) {
+      switch (action) {
+        case DIR.LEFT: move(DIR.LEFT); break;
+        case DIR.RIGHT: move(DIR.RIGHT); break;
+        case DIR.UP: rotate(); break;
+        case DIR.DOWN: drop(); break;
+      }
+    }
+
+    function move(dir) {
+      var x = barnyard.x, y = barnyard.y;
+      switch (dir) {
+        case DIR.RIGHT: x = x + 1; break;
+        case DIR.LEFT: x = x - 1; break;
+        case DIR.DOWN: y = y + 1; break;
+      }
+      if (free_fun(barnyard.tp, x, y, barnyard.dir)) {
+        barnyard.x = x;
+        barnyard.y = y;
+        invalidate();
+        return true;
+      }
+      else {
+        return false;
+      }
+    }
+
+    function rotate() {
+      var newdir = (barnyard.dir == DIR.MAX ? DIR.MIN : barnyard.dir + 1);
+      if (free_fun(barnyard.tp, barnyard.x, barnyard.y, newdir)) {
+        barnyard.dir = newdir;
+        invalidate();
+      }
+    }
+
+    function drop() {
+      if (!move(DIR.DOWN)) {
+        addScore(10);
+        dropPiece();
+        removeLines();
+        setCurrentPiece(following);
+        setNextPiece(random_chunk());
+        clearmanagement();
+        if (occupied(barnyard.tp, barnyard.x, barnyard.y, barnyard.dir)) {
+          lose();
+        }
+      }
+    }
+
+    function dropPiece() {
+      anyblocks(barnyard.tp, barnyard.x, barnyard.y, barnyard.dir, function (x, y) {
+        setBlock(x, y, barnyard.tp);
+      });
+    }
+
+    function removeLines() {
+      var x, y, complete, n = 0;
+      for (y = ny; y > 0; --y) {
+        complete = true;
+        for (x = 0; x < nx; ++x) {
+          if (!getBlock(x, y))
+            complete = false;
+        }
+        if (complete) {
+          removeLine(y);
+          y = y + 1; //// recheck same line
+          n++;
+        }
+      }
+      if (n > 0) {
+        addRows(n);
+        addScore(100 * Math.pow(2, n - 1)); //// 1: 100, 2: 200, 3: 400, 4: 800
+      }
+    }
+
+    function removeLine(n) {
+      var x, y;
+      for (y = n; y >= 0; --y) {
+        for (x = 0; x < nx; ++x)
+          setBlock(x, y, (y == 0) ? null : getBlock(x, y - 1));
+      }
+    }
+
+    //// RENDERING
+
+    var invalid = {};
+
+    function invalidate() { invalid.court = true; }
+    function invalidateNext() { invalid.following = true; }
+    function invalidateScore() { invalid.scr = true; }
+    function invalidateRows() { invalid.line_row = true; }
+
+    function draw() {
+      cntx.save();
+      cntx.lineWidth = 1;
+      cntx.translate(0.5, 0.5); //// for crisp 1px black lines
+      drawCourt();
+      drawNext();
+      extension_count();
+      extension_line();
+      cntx.restore();
+    }
+
+    function drawCourt() {
+      if (invalid.court) {
+        cntx.clearRect(0, 0, canvas.width, canvas.height);
+        if (act)
+          drawPiece(cntx, barnyard.tp, barnyard.x, barnyard.y, barnyard.dir);
+        var x, y, block;
+        for (y = 0; y < ny; y++) {
+          for (x = 0; x < nx; x++) {
+            if (block = getBlock(x, y))
+              drawBlock(cntx, x, y, block.color);
+          }
+        }
+        cntx.strokeRect(0, 0, nx * x_p - 1, ny * y_p - 1); //// court boundary
+        invalid.court = false;
+      }
+    }
+
+    function drawNext() {
+      if (invalid.following) {
+        var padding = (nu - following.tp.size) / 2; //// half-arsed attempt at centering following piece display
+        uctx.save();
+        uctx.translate(0.5, 0.5);
+        uctx.clearRect(0, 0, nu * x_p, nu * y_p);
+        drawPiece(uctx, following.tp, padding, padding, following.dir);
+        uctx.strokeStyle = 'black';
+        uctx.strokeRect(0, 0, nu * x_p - 1, nu * y_p - 1);
+        uctx.restore();
+        invalid.following = false;
+      }
+    }
+
+    function extension_count() {
+      if (invalid.scr) {
+        in_html('score', ("00000" + Math.floor(core)).slice(-5));
+        invalid.scr = false;
+      }
+    }
+
+    function extension_line() {
+      if (invalid.line_row) {
+        in_html('rows', line_row);
+        invalid.line_row = false;
+      }
+    }
+
+    function drawPiece(cntx, tp, x, y, dir) {
+      anyblocks(tp, x, y, dir, function (x, y) {
+        drawBlock(cntx, x, y, tp.color);
+      });
+    }
+
+    function drawBlock(cntx, x, y, color) {
+      cntx.fillStyle = color;
+      cntx.fillRect(x * x_p, y * y_p, x_p, y_p);
+      cntx.strokeRect(x * x_p, y * y_p, x_p, y_p)
+    }
+
+    //// FINALLY, lets run_game the game
+
+    run_game();
+
+  </script>
+
+</body>
+
+</html>
